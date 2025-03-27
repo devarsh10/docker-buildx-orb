@@ -1,0 +1,147 @@
+version: 2.1
+
+description: >
+  Orb for installing and using Docker Buildx for multi-architecture builds.
+
+display:
+  home_url: "https://github.com/devarsh10/docker-buildx-orb"
+  source_url: "https://github.com/devarsh10/docker-buildx-orb"
+
+commands:
+  install:
+    description: "Install Docker Buildx for multi-architecture builds"
+    parameters:
+      buildx-version:
+        type: string
+        default: "v0.5.1"
+        description: "Version of Docker Buildx to install"
+    steps:
+      - run:
+          name: Install Docker Buildx
+          command: |
+            mkdir -vp ~/.docker/cli-plugins/
+            curl --silent -L "https://github.com/docker/buildx/releases/download/<< parameters.buildx-version >>/buildx-<< parameters.buildx-version >>.linux-amd64" > ~/.docker/cli-plugins/docker-buildx
+            chmod a+x ~/.docker/cli-plugins/docker-buildx
+            docker buildx version
+            sudo apt-get update && sudo apt-get install -y binfmt-support qemu-user-static
+            docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+            docker context create buildcontext
+            docker buildx create buildcontext --use
+            
+  build-and-push:
+    description: "Build and push multi-architecture Docker image using Buildx"
+    parameters:
+      image-name:
+        type: string
+        default: CIRCLE_PROJECT_NAME
+        description: "Name of the Docker image to build"
+      tag:
+        type: string
+        default: CIRCLE_TAG
+        description: "Tag for the Docker image"
+      dockerfile:
+        type: string
+        default: "Dockerfile"
+        description: "Path to the Dockerfile"
+      platforms:
+        type: string
+        default: "linux/amd64,linux/arm64"
+        description: "Platforms to build for (comma-separated)"
+      context:
+        type: string
+        default: "."
+        description: "Build context"
+      push:
+        type: boolean
+        default: true
+        description: "Whether to push the image"
+      docker-username:
+        type: env_var_name
+        default: DOCKERHUB_USERNAME
+        description: "Environment variable storing Docker Hub username"
+      docker-password:
+        type: env_var_name
+        default: DOCKERHUB_PASSWORD
+        description: "Environment variable storing Docker Hub password"
+    steps:
+      - run:
+          name: Set up Docker Buildx
+          command: |
+            docker buildx ls
+            docker buildx inspect --bootstrap
+      - run:
+          name: Login to Docker Hub
+          command: |
+            echo "${<< parameters.docker-password >>}" | docker login -u "${<< parameters.docker-username >>}" --password-stdin
+      - run:
+          name: Build and Push Docker image
+          command: |
+            PUSH_FLAG=""
+            if [ "<< parameters.push >>" = "true" ]; then
+              PUSH_FLAG="--push"
+            fi
+            docker buildx build \
+              $PUSH_FLAG \
+              --platform << parameters.platforms >> \
+              -t "<< parameters.image-name >>:<< parameters.tag >>" \
+              -f << parameters.dockerfile >> \
+              << parameters.context >>
+
+jobs:
+  build-and-push-image:
+    description: "Build and push a multi-architecture Docker image"
+    parameters:
+      image-name:
+        type: string
+        default: CIRCLE_PROJECT_NAME
+        description: "Name of the Docker image to build"
+      tag:
+        type: string
+        default: CIRCLE_TAG
+        description: "Tag for the Docker image"
+      checkout:
+        type: boolean
+        default: true
+        description: "Whether to checkout the repository"
+      setup-remote-docker:
+        type: boolean
+        default: true
+        description: "Whether to setup remote Docker"
+      docker-version:
+        type: string
+        default: "20.10"
+        description: "Docker version to use"
+      executor:
+        type: executor
+        default: default-executor
+        description: "Executor to use for this job"
+      platforms:
+        type: string
+        default: "linux/amd64,linux/arm64"
+        description: "Platforms to build for (comma-separated)"
+      build-steps:
+        type: steps
+        default: []
+        description: "Additional steps to run before building the image"
+    executor: << parameters.executor >>
+    steps:
+      - when:
+          condition: << parameters.checkout >>
+          steps:
+            - checkout
+      - when:
+          condition: << parameters.setup-remote-docker >>
+          steps:
+            - setup_remote_docker:
+                version: << parameters.docker-version >>
+      - install
+      - steps: << parameters.build-steps >>
+      - build-and-push:
+          image-name: << parameters.image-name >>
+          tag: << parameters.tag >>
+          platforms: << parameters.platforms >>
+
+executors:
+  default-executor:
+    docker:
+      - image: cimg/openjdk:17-node
