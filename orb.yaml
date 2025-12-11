@@ -144,4 +144,4 @@ jobs:
 executors:
   default-executor:
     docker:
-      - image: cimg/openjdk:17-node
+      - image: eclipse-temurin:17-jdk-focal
